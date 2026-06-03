@@ -44,14 +44,15 @@ class Main():
         self.datestr = None
         
         self.sample_len = (2048-self.train_config['slide_win']) # Save length used per sample for ease later in the code
+        self.slide_stride = self.train_config['slide_stride']
         self.details = train_config['comment']
 
         print(f"Window: {train_config['slide_win']}")
         print(f"Topk: {train_config['topk']}")
 
         dataset = self.env_config['dataset']
-        train_orig = pd.read_parquet(f'./data/{dataset}/train.parquet') # The GW dataset is structured slightly differently than the original data, so I made this adjustment
-        val_orig = pd.read_parquet(f'./data/{dataset}/val.parquet')    
+        train_orig = pd.read_parquet(f'./data/{dataset}/train_stand.parquet') # The GW dataset is structured slightly differently than the original data, so I made this adjustment
+        val_orig = pd.read_parquet(f'./data/{dataset}/val_stand.parquet')    
         # Generate boolean masks for subsystems + create dictionary mapping name of channel to a subsystem -> used to colour the graph in the end
         subsys_masks, channel_to_subsystem_full = get_subsys_masks(channel_names = list(train_orig.keys()))
         self.subsys_masks = subsys_masks
@@ -78,12 +79,11 @@ class Main():
         print(f"Using subsystems: {subsystem_names}")
 
         print(f"Train data shape: {train_orig.shape}")
-        print(f"Val data shape: {val_orig.shape}")
 
-        test_orig_pre = pd.read_parquet(f'./data/{dataset}/test.parquet')
+        test_orig_pre = pd.read_parquet(f'./data/{dataset}/test_stand_CTWS.parquet')
         attack = test_orig_pre.iloc[:,-1]
         test_orig_nonfilt = test_orig_pre.iloc[:,:-1]
-        test_orig = test_orig_nonfilt.iloc[:,combined_mask].copy()
+        test_orig = test_orig_nonfilt.iloc[:,combined_mask].copy()          #subsys_masks['SUS'] --> 'REST' would be TCS/PSL/OMC/CAl/ALS/LSC
         test_orig['attack'] = attack
         print(f"Test data shape: {test_orig.shape}")
         
@@ -115,9 +115,9 @@ class Main():
             'slide_stride': train_config['slide_stride'],
         }
 
-        train_dataset = TimeDataset(train_dataset_indata, fc_edge_index, mode='train', config=cfg, segment_length=2048) # Segments are 1648 timesteps (2048 (8secs) - 400 (200 on both sides to get rid of whitening edge effects))
-        val_dataset = TimeDataset(val_dataset_indata, fc_edge_index, mode='train', config=cfg, segment_length=2048)
-        test_dataset = TimeDataset(test_dataset_indata, fc_edge_index, mode='test', config=cfg, segment_length=2048)   # However not necesarily whitened data so then it would be 2048 steps
+        train_dataset = TimeDataset2(train_dataset_indata, fc_edge_index, mode='train', config=cfg, segment_length=2048) # Segments are 1648 timesteps (2048 (8secs) - 400 (200 on both sides to get rid of whitening edge effects))
+        val_dataset = TimeDataset2(val_dataset_indata, fc_edge_index, mode='train', config=cfg, segment_length=2048)
+        test_dataset = TimeDataset2(test_dataset_indata, fc_edge_index, mode='test', config=cfg, segment_length=2048)   # However not necesarily whitened data so then it would be 2048 steps
 
 
         # Put data in DataLoader
@@ -150,8 +150,10 @@ class Main():
         
         if len(self.env_config['load_model_path']) > 0:
             model_save_path = self.env_config['load_model_path']
+            self.run_dir = Path(model_save_path).parent
         else:
-            model_save_path = self.get_save_path()[0]
+            model_save_path, results_csv_path = self.get_save_path()
+            self.run_dir = Path(results_csv_path).parent
 
         self.save_config()
 
@@ -179,41 +181,8 @@ class Main():
         self.get_score(self.test_result, self.val_result, run_mean_window=100, sample_len=self.sample_len, slide_stride = self.slide_stride)
         self.get_score(self.test_result, self.val_result, run_mean_window=200, sample_len=self.sample_len, slide_stride = self.slide_stride)
         self.get_score(self.test_result, self.val_result, run_mean_window=500, sample_len=self.sample_len, slide_stride = self.slide_stride)
-        # === Extract attention weights for one sample ===
-        """attention_weights(
-            model=self.model,
-            feature_map=self.feature_map,
-            fc_edge_index=self.fc_edge_index,
-            dataset_name=self.env_config['dataset'],
-            device=self.device,
-            slide_win=self.train_config['slide_win'],
-            topk_indices=self.topk_indices
-        )"""
-
-    def get_loaders(self, train_dataset, seed, batch, val_ratio=0.1):
-        dataset_len = int(len(train_dataset))
-        n_samples = dataset_len // self.sample_len
-        train_samples = np.floor(n_samples * (1 - val_ratio))
-        train_use_len = int(train_samples * self.sample_len)
-        val_samples = np.ceil(n_samples * (val_ratio))
-        val_use_len = int(val_samples * self.sample_len)
-        val_start_index = random.randrange(train_use_len)
-        indices = torch.arange(dataset_len)
-
-        train_sub_indices = torch.cat([indices[:val_start_index], indices[val_start_index+val_use_len:]])
-        train_subset = Subset(train_dataset, train_sub_indices)
-
-        val_sub_indices = indices[val_start_index:val_start_index+val_use_len]
-        val_subset = Subset(train_dataset, val_sub_indices)
 
 
-        train_dataloader = DataLoader(train_subset, batch_size=batch,
-                                shuffle=True, pin_memory=True, num_workers = 2)
-
-        val_dataloader = DataLoader(val_subset, batch_size=batch,
-                                shuffle=False, pin_memory=True, num_workers = 2)    
-
-        return train_dataloader, val_dataloader
 
     def get_score(self, test_result, val_result, run_mean_window, sample_len):
         _start = time.time()
@@ -312,6 +281,8 @@ class Main():
 
     def save_plots(self):
         # Plot the training and validation loss
+        out_dir = self.run_dir / "imgs"
+        out_dir.mkdir(parents=True, exist_ok=True)
         epochs = np.arange(1, len(self.train_loss) + 1)
         plt.figure(figsize=(8,5))
         fig, ax1 = plt.subplots()
@@ -326,7 +297,7 @@ class Main():
         ax2.set_ylabel('Learning rate')
         plt.title('Training and Validation Loss')
         plt.grid(True)
-        plt.savefig(f'./results/{self.env_config["dataset"]}/imgs/loss_curve{self.details}.png')
+        plt.savefig(out_dir / f"loss_curve_{self.details}.png")
         plt.close()
 
         plt.figure(figsize=(8,5))
@@ -338,7 +309,7 @@ class Main():
         plt.yscale('log')
         plt.legend()
         plt.grid(True)
-        plt.savefig(f'./results/{self.env_config["dataset"]}/imgs/loss_curve_log{self.details}.png')
+        plt.savefig(out_dir / f"loss_curve_log_{self.details}.png")
         plt.close()
 
 
@@ -358,27 +329,6 @@ class Main():
         # Set colormap logic
         cmap = plt.get_cmap("tab10")
 
-
-        """
-        subsystem_colors = {subsys: cmap(i % 10) for i, subsys in enumerate(subsystems)}
-
-        # Plot graph
-        plt.figure(figsize=(12, 10))
-        already_added = set()
-        for i, ch in enumerate(channel_names):
-            subsystem = channel_to_subsystem.get(ch, "UNKNOWN")
-            label = subsystem if subsystem not in already_added else None
-            already_added.add(subsystem)
-            plt.scatter(emb_2d[i, 0], emb_2d[i, 1], color=subsystem_colors[subsystem], label=label, s=50, alpha=0.8)
-
-            # Optional channel labels
-            #plt.text(emb_2d[i, 0], emb_2d[i, 1], ch, fontsize=6)
-
-        plt.legend()
-        plt.title("Node embeddings colored by subsystem")
-        plt.tight_layout()
-
-        plt.savefig(f"embeddings/{self.details}.png", dpi=300) """
         def mpl_to_plotly_color(c):
             """Convert matplotlib RGBA (0-1) to plotly rgba string"""
             r, g, b, a = c
@@ -419,7 +369,10 @@ class Main():
         )
 
         # Save interactive HTML
-        fig.write_html(f"embeddings/{self.details}.html")
+        emb_dir = Path(f"./embeddings/{self.env_config['dataset']}")
+        emb_dir.mkdir(parents=True, exist_ok=True)
+
+        fig.write_html(emb_dir / f"{self.details}.html")
 
     def save_config(self):
 
@@ -456,7 +409,7 @@ if __name__ == "__main__":
     parser.add_argument('-dim', help='dimension', type = int, default=64)
     parser.add_argument('-slide_stride', help='slide_stride', type = int, default=5)
     parser.add_argument('-save_path_pattern', help='save path pattern', type = str, default='')
-    parser.add_argument('-dataset', help='wadi / swat', type = str, default='wadi')
+    parser.add_argument('-dataset', help='GW', type = str, default='GW')
     parser.add_argument('-device', help='cuda / cpu', type = str, default='cuda')
     parser.add_argument('-random_seed', help='random seed', type = int, default=0)
     parser.add_argument('-comment', help='experiment comment', type = str, default='')
