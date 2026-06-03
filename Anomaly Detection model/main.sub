@@ -1,0 +1,54 @@
++UseOS = "el9"
++JobCategory = "medium"
+executable = run_condor.sh
+
+# Experiment parameters
+DATASET = GW
+SUBSYSTEMS = IMC
+BATCH = 128
+EPOCHS = 300
+SLIDE_WIN = 100
+SLIDE_STRIDE = 5
+DIM = 128
+TOPK = 15
+OUT_LAYER_NUM = 1
+OUT_LAYER_INTER_DIM = 128
+VAL_RATIO = 0.2
+DECAY = 0
+SEED = 5
+REPORT = val
+
+# Automatic experiment name
+EXPNAME =  $(SUBSYSTEMS)_$(SLIDE_WIN)s_k$(TOPK)
+
+# Python arguments
+arguments = \
+    -dataset $(DATASET) \
+    -subsystems $(SUBSYSTEMS) \
+    -batch $(BATCH) \
+    -epoch $(EPOCHS) \
+    -slide_win $(SLIDE_WIN) \
+    -slide_stride $(SLIDE_STRIDE) \
+    -dim $(DIM) \
+    -topk $(TOPK) \
+    -out_layer_num $(OUT_LAYER_NUM) \
+    -out_layer_inter_dim $(OUT_LAYER_INTER_DIM) \
+    -val_ratio $(VAL_RATIO) \
+    -decay $(DECAY) \
+    -random_seed $(SEED) \
+    -report $(REPORT) \
+    -comment $(EXPNAME) \
+    -save_path_pattern $(DATASET)
+
+# Output files
+output = condor_files/output/$(EXPNAME).out
+error  = condor_files/error/$(EXPNAME).err
+log    = condor_files/log/$(EXPNAME).log
+
+
+# Resources
+request_memory = 100 Gb
+request_disk   = 10 Gb
+request_gpus   = 1
+
+queue

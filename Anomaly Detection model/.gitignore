@@ -1,0 +1,14 @@
+pretrained/
+results/
+logs/
+runs/
+temp/
+run_copy.sh
+__pycache__
+*.json
+*.h5
+*.parquet
+*.html
+*.log
+*.out
+*.err
