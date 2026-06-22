@@ -4,26 +4,24 @@ import torch
 import matplotlib.pyplot as plt
 import plotly.express as px
 from sklearn.manifold import TSNE
-from torch.utils.data import DataLoader, random_split, Subset
+from torch.utils.data import DataLoader
 
-from sklearn.preprocessing import MinMaxScaler
 
 from util.env import get_device, set_device
 from util.preprocess import build_loc_net, construct_data
 from util.net_struct import get_feature_map, get_fc_graph_struc
-from util.data import save_scores_to_hdf5, get_subsys_masks
+from util.data import save_scores_to_hdf5, get_subsys_masks, generate_datasets
 
-from datasets.TimeDataset import TimeDataset, TimeDataset2
+from datasets.TimeDataset import TimeDataset
 
 
 from models.GDN import GDN
 
 from train import train
 from test  import test
-from attention_weights import attention_weights
-from evaluate import get_err_scores, get_best_performance_data, get_val_performance_data, get_full_err_scores, process_labels
+from evaluate import get_best_performance_data, get_val_performance_data, get_full_err_scores, process_labels
 
-import sys
+
 import time
 from datetime import datetime
 
@@ -42,7 +40,8 @@ class Main():
         self.train_config = train_config
         self.env_config = env_config
         self.datestr = None
-        
+
+
         self.sample_len = (2048-self.train_config['slide_win']) # Save length used per sample for ease later in the code
         self.slide_stride = self.train_config['slide_stride']
         self.details = train_config['comment']
@@ -51,15 +50,18 @@ class Main():
         print(f"Topk: {train_config['topk']}")
 
         dataset = self.env_config['dataset']
-        train_orig = pd.read_parquet(f'./data/{dataset}/train_stand.parquet') # The GW dataset is structured slightly differently than the original data, so I made this adjustment
-        val_orig = pd.read_parquet(f'./data/{dataset}/val_stand.parquet')    
+        
+        # Load data
+        normal_data = pd.read_parquet(f'./data/{dataset}/normal_data.parquet')
+        anomaly_data = pd.read_parquet(f'./data/{dataset}/anomaly_data_extended.parquet')
+        
         # Generate boolean masks for subsystems + create dictionary mapping name of channel to a subsystem -> used to colour the graph in the end
-        subsys_masks, channel_to_subsystem_full = get_subsys_masks(channel_names = list(train_orig.keys()))
+        subsys_masks, channel_to_subsystem_full = get_subsys_masks(channel_names = list(normal_data.keys()))
         self.subsys_masks = subsys_masks
         self.channel_to_subsystem = channel_to_subsystem_full
         
         if self.env_config['subsystems'] == 'FULL':
-            combined_mask = np.ones(train_orig.shape[1], dtype=bool)
+            combined_mask = np.ones(normal_data.shape[1], dtype=bool)
             subsystem_names = ['FULL']
 
         else:
@@ -74,29 +76,24 @@ class Main():
             for subsystem in subsystem_names:
                 combined_mask += subsys_masks[subsystem]
 
-            train_orig = train_orig.iloc[:,combined_mask]
-            val_orig = val_orig.iloc[:,combined_mask]
+            
+
         print(f"Using subsystems: {subsystem_names}")
 
-        print(f"Train data shape: {train_orig.shape}")
-
-        test_orig_pre = pd.read_parquet(f'./data/{dataset}/test_stand_CTWS.parquet')
-        attack = test_orig_pre.iloc[:,-1]
-        test_orig_nonfilt = test_orig_pre.iloc[:,:-1]
-        test_orig = test_orig_nonfilt.iloc[:,combined_mask].copy()          #subsys_masks['SUS'] --> 'REST' would be TCS/PSL/OMC/CAl/ALS/LSC
-        test_orig['attack'] = attack
-        print(f"Test data shape: {test_orig.shape}")
-        
+        # Split data in train/val/test and applying mask
+        train, val, test = generate_datasets(normal_data, anomaly_data, mask = combined_mask, val_percentage=train_config['val_ratio'], test_percentage=train_config['test_ratio'])
+        print(f"Train data shape: {train.shape}", flush=True)
+        print(f"Val data shape: {val.shape}", flush=True)
+        print(f"Test data shape: {test.shape}", flush=True)
+        print(train.memory_usage(deep=True).sum() / 1e9, "GB train", flush=True)
+        print(val.memory_usage(deep=True).sum() / 1e9, "GB val", flush=True)
+        print(test.memory_usage(deep=True).sum() / 1e9, "GB test", flush=True)
+                
        
-        train, val, test = train_orig, val_orig, test_orig
-        if 'attack' in train.columns:
-            train = train.drop(columns=['attack'])
-
-        feature_map = get_feature_map(train_orig)
+        feature_map = get_feature_map(train)
         
         fc_struc = get_fc_graph_struc(dataset)
         
-
         set_device(env_config['device'])
         self.device = get_device()
         
@@ -115,10 +112,9 @@ class Main():
             'slide_stride': train_config['slide_stride'],
         }
 
-        train_dataset = TimeDataset2(train_dataset_indata, fc_edge_index, mode='train', config=cfg, segment_length=2048) # Segments are 1648 timesteps (2048 (8secs) - 400 (200 on both sides to get rid of whitening edge effects))
-        val_dataset = TimeDataset2(val_dataset_indata, fc_edge_index, mode='train', config=cfg, segment_length=2048)
-        test_dataset = TimeDataset2(test_dataset_indata, fc_edge_index, mode='test', config=cfg, segment_length=2048)   # However not necesarily whitened data so then it would be 2048 steps
-
+        train_dataset = TimeDataset(train_dataset_indata, fc_edge_index, mode='train', config=cfg, segment_length=2048) # Segments are 1648 timesteps (2048 (8secs) - 400 (200 on both sides to get rid of whitening edge effects))
+        val_dataset = TimeDataset(val_dataset_indata, fc_edge_index, mode='test', config=cfg, segment_length=2048)
+        test_dataset = TimeDataset(test_dataset_indata, fc_edge_index, mode='test', config=cfg, segment_length=2048)   # However not necesarily whitened data so then it would be 2048 steps
 
         # Put data in DataLoader
         self.train_dataloader = DataLoader(train_dataset, batch_size=train_config['batch'],
@@ -176,20 +172,18 @@ class Main():
         # Timesteps per sample is 2048 (8s at sampling rate 256) - sliding window size (train_config['slide_win'])
           
 
-        self.get_score(self.test_result, self.val_result, run_mean_window=10, sample_len=self.sample_len, slide_stride = self.slide_stride)
-        self.get_score(self.test_result, self.val_result, run_mean_window=50, sample_len=self.sample_len, slide_stride = self.slide_stride)
-        self.get_score(self.test_result, self.val_result, run_mean_window=100, sample_len=self.sample_len, slide_stride = self.slide_stride)
-        self.get_score(self.test_result, self.val_result, run_mean_window=200, sample_len=self.sample_len, slide_stride = self.slide_stride)
-        self.get_score(self.test_result, self.val_result, run_mean_window=500, sample_len=self.sample_len, slide_stride = self.slide_stride)
+        #self.get_score(self.test_result, self.val_result, run_mean_window=10, sample_len=self.sample_len)
+        self.get_score(self.test_result, self.val_result, run_mean_window=50, sample_len=self.sample_len)
+        self.get_score(self.test_result, self.val_result, run_mean_window=100, sample_len=self.sample_len)
+        #self.get_score(self.test_result, self.val_result, run_mean_window=200, sample_len=self.sample_len)
+        self.get_score(self.test_result, self.val_result, run_mean_window=500, sample_len=self.sample_len)
 
 
 
     def get_score(self, test_result, val_result, run_mean_window, sample_len):
         _start = time.time()
 
-        feature_num = len(test_result[0][0])
         np_test_result = np.array(test_result)
-        np_val_result = np.array(val_result)
 
         test_labs = np_test_result[2, :, 0].tolist()
         test_labels = process_labels(test_labs, sample_len, run_mean_window)
@@ -259,7 +253,7 @@ class Main():
         _end = time.time()
         print(f'Time for saving score with window size {run_mean_window}: {_end - _start} s', flush=True)
 
-    def get_save_path(self, feature_name=''):
+    def get_save_path(self):
 
         dir_path = self.env_config['save_path']
         
@@ -281,7 +275,13 @@ class Main():
 
     def save_plots(self):
         # Plot the training and validation loss
-        out_dir = self.run_dir / "imgs"
+        save_dir = Path(
+            f"./results/{self.env_config['dataset']}/"
+            f"{self.datestr}_{self.details}"
+        )
+        out_dir = save_dir / "imgs"
+
+        print(f"Loss plots saved in: {out_dir}", flush=True)
         out_dir.mkdir(parents=True, exist_ok=True)
         epochs = np.arange(1, len(self.train_loss) + 1)
         plt.figure(figsize=(8,5))
@@ -328,6 +328,7 @@ class Main():
         subsystems = sorted(set(channel_to_subsystem.values()))
         # Set colormap logic
         cmap = plt.get_cmap("tab10")
+
 
         def mpl_to_plotly_color(c):
             """Convert matplotlib RGBA (0-1) to plotly rgba string"""
@@ -417,6 +418,8 @@ if __name__ == "__main__":
     parser.add_argument('-out_layer_inter_dim', help='out_layer_inter_dim', type = int, default=256)
     parser.add_argument('-decay', help='decay', type = float, default=0)
     parser.add_argument('-val_ratio', help='val ratio', type = float, default=0.1)
+    parser.add_argument('-test_ratio', help='test ratio', type = float, default=0.1)
+    parser.add_argument('-learning_rate', help='learning rate', type = float, default=1e-3)
     parser.add_argument('-topk', help='topk num', type = int, default=20)
     parser.add_argument('-report', help='best / val', type = str, default='best')
     parser.add_argument('-load_model_path', help='trained model path', type = str, default='')
@@ -445,6 +448,8 @@ if __name__ == "__main__":
         'out_layer_inter_dim': args.out_layer_inter_dim,
         'decay': args.decay,
         'val_ratio': args.val_ratio,
+        'test_ratio': args.test_ratio,
+        'learning_rate': args.learning_rate,
         'topk': args.topk,
     }
 

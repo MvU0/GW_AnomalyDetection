@@ -1,12 +1,11 @@
 import torch
-from torch.nn import Parameter, Linear, Sequential, BatchNorm1d, ReLU
+from torch.nn import Parameter, Linear
 import torch.nn.functional as F
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.utils import remove_self_loops, add_self_loops, softmax
 
 from torch_geometric.nn.inits import glorot, zeros
 import time
-import math, sys
 
 class GraphLayer(MessagePassing):
     def __init__(self, in_channels, out_channels, heads=1, concat=True,

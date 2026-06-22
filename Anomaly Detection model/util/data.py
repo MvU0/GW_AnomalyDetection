@@ -8,6 +8,92 @@ import pandas as pd
 import h5py
 
 
+def generate_datasets(normal_data, glitch_data, mask,
+                      val_percentage=0.2, test_percentage=0.1,
+                      N_glitches=None):
+
+    SEG = 2048
+
+    # 1. Convert to NumPy
+    normal = normal_data.iloc[:, mask].to_numpy(dtype=np.float32, copy=False)
+    glitch = glitch_data.iloc[:, mask].to_numpy(dtype=np.float32, copy=False)
+
+    n_channels = normal.shape[1]
+
+    # reshape into (samples, time, channels)
+    normal = normal.reshape(-1, SEG, n_channels)
+    glitch = glitch.reshape(-1, SEG, n_channels)
+
+    n_samples_norm = normal.shape[0]
+
+    n_glitch_total = glitch.shape[0]
+    n_glitch_per_class = n_glitch_total // 3
+
+    # 2. Split indices
+    N_test = int(np.floor(n_samples_norm * test_percentage))
+    N_val = int(np.floor(n_samples_norm * val_percentage))
+    N_train = n_samples_norm - N_test - N_val
+
+    perm = np.random.permutation(n_samples_norm)
+
+    idx_train = perm[:N_train]
+    idx_val = perm[N_train:N_train + N_val]
+    idx_test = perm[N_train + N_val:]
+
+    # 3. Build datasets
+    train = normal[idx_train].reshape(-1, n_channels)
+    val = normal[idx_val].reshape(-1, n_channels)
+    test_norm = normal[idx_test].reshape(-1, n_channels)
+
+    # 4. Standardization 
+    means = normal.reshape(-1, n_channels).mean(axis=0)
+    stds = normal.reshape(-1, n_channels).std(axis=0)
+    stds[stds == 0] = 1.0
+
+    train_std = (train - means) / stds
+    val_std = (val - means) / stds
+    test_norm_std = (test_norm - means) / stds
+
+    # 5. Glitch construction 
+    if N_glitches is None:
+        N_glitches = N_test
+
+    tomte = glitch[:N_glitches]
+    whistle = glitch[n_glitch_per_class:n_glitch_per_class + N_glitches]
+    scat = glitch[2 * n_glitch_per_class:2 * n_glitch_per_class + N_glitches]
+
+    test_glitches = np.concatenate([tomte, whistle, scat], axis=0)
+
+    # flatten to match normal format
+    test_glitches = test_glitches.reshape(-1, n_channels)
+
+    test_glitches_std = (test_glitches - means) / stds
+
+    # 6. Final test set
+    test_df = np.concatenate([test_norm_std, test_glitches_std], axis=0)
+
+    # labels
+    n_normal_rows = test_norm_std.shape[0]
+    n_glitch_rows = test_glitches_std.shape[0]
+
+    labels = np.concatenate([
+        np.zeros(n_normal_rows, dtype=np.float32),
+        np.ones(n_glitch_rows, dtype=np.float32)
+    ])
+
+    # If you MUST keep pandas output:
+    import pandas as pd
+    test_df = pd.DataFrame(test_df)
+    test_df["attack"] = labels
+
+    return (
+        pd.DataFrame(train_std),
+        pd.DataFrame(val_std),
+        test_df
+    )
+
+
+
 def get_subsys_masks(channel_names):
     # Create boolean masks for each subsystem
     subsys_counts = {}
@@ -80,19 +166,6 @@ def eval_mseloss(predicted, ground_truth):
     ground_truth_list = np.array(ground_truth)
     predicted_list = np.array(predicted)
 
-    
-    # mask = (ground_truth_list == 0) | (predicted_list == 0)
-
-    # ground_truth_list = ground_truth_list[~mask]
-    # predicted_list = predicted_list[~mask]
-
-    # neg_mask = predicted_list < 0
-    # predicted_list[neg_mask] = 0
-
-    # err = np.abs(predicted_list / ground_truth_list - 1)
-    # acc = (1 - np.mean(err))
-
-    # return loss
     loss = mean_squared_error(predicted_list, ground_truth_list)
 
     return loss
@@ -121,7 +194,6 @@ def get_err_mean_and_quantile(predicted, groundtruth, percentage):
     np_arr = np.abs(np.subtract(np.array(predicted), np.array(groundtruth)))
 
     err_median = trim_mean(np_arr, percentage)
-    # err_iqr = iqr(np_arr)
     err_delta = percentile(np_arr, int(percentage*100)) - percentile(np_arr, int((1-percentage)*100))
 
     return err_median, err_delta
@@ -139,7 +211,6 @@ def get_err_mean_and_std(predicted, groundtruth):
 def get_f1_score(scores, gt, contamination):
 
     padding_list = [0]*(len(gt) - len(scores))
-    # print(padding_list)
 
     threshold = percentile(scores, 100 * (1 - contamination))
 

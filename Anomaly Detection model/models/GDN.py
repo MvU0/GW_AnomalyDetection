@@ -1,11 +1,8 @@
-import numpy as np
 import torch
-import matplotlib.pyplot as plt
 import torch.nn as nn
 import time
 from util.time import *
 from util.env import *
-from torch_geometric.nn import GCNConv, GATConv, EdgeConv
 import math, sys
 import torch.nn.functional as F
 
@@ -83,10 +80,6 @@ class GDN(nn.Module):
         super(GDN, self).__init__()
 
         self.edge_index_sets = edge_index_sets
-
-        device = get_device()
-
-        edge_index = edge_index_sets[0]
 
 
         embed_dim = dim
