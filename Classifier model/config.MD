@@ -1,4 +1,4 @@
-# Configuration of training for models discussed in thesis: 
+# Configuration of training for classifier models discussed in thesis: 
             Learning Auxiliary Channel Relationships for Glitch Detection in Gravitational Wave Detectors Using Graph Neural Networks
 
 
