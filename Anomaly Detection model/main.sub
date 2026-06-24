@@ -1,12 +1,12 @@
 +UseOS = "el9"
-+JobCategory = "medium"
-executable = run_condor.sh
++JobCategory = "short"
+executable = main.sh
 
 # Experiment parameters
 DATASET = GW
 SUBSYSTEMS = IMC
-BATCH = 128
-EPOCHS = 300
+BATCH = 256
+EPOCHS = 400
 SLIDE_WIN = 100
 SLIDE_STRIDE = 5
 DIM = 128
@@ -14,8 +14,10 @@ TOPK = 15
 OUT_LAYER_NUM = 1
 OUT_LAYER_INTER_DIM = 128
 VAL_RATIO = 0.2
-DECAY = 0
-SEED = 5
+TEST_RATIO = 0.1
+DECAY = 1e-5
+LR = 1e-4
+SEED = 100
 REPORT = val
 
 # Automatic experiment name
@@ -34,6 +36,8 @@ arguments = \
     -out_layer_num $(OUT_LAYER_NUM) \
     -out_layer_inter_dim $(OUT_LAYER_INTER_DIM) \
     -val_ratio $(VAL_RATIO) \
+    -test_ratio $(TEST_RATIO) \
+    -learning_rate $(LR) \
     -decay $(DECAY) \
     -random_seed $(SEED) \
     -report $(REPORT) \
@@ -47,8 +51,9 @@ log    = condor_files/log/$(EXPNAME).log
 
 
 # Resources
-request_memory = 100 Gb
-request_disk   = 10 Gb
+request_memory = 50 Gb
+request_disk   = 2 Gb
 request_gpus   = 1
+request_cpus   = 2
 
 queue

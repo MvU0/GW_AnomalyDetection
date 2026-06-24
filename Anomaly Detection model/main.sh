@@ -1,7 +1,7 @@
 #!/bin/bash
 source ~/.bashrc
-conda activate GNN_env
-cd /data/gravwav/mvuden/anomaly-detection-thesis-mees-van-uden/GNN_rework
+conda activate your_env
+cd /your_dir/to_mainfunction/
 
 
 # Determine device

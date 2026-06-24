@@ -3,41 +3,35 @@ import numpy as np
 from sklearn.metrics import precision_score, recall_score, roc_auc_score, f1_score
 
 
-def get_full_err_scores(test_result, val_result, run_mean_window, sample_len, slide_stride):
-    np_test_result = np.array(test_result)
-    np_val_result = np.array(val_result)
+def get_full_err_scores(test_result, val_result, run_mean_window, sample_len):
+    np_test_result = np.asarray(test_result)
+    np_val_result = np.asarray(val_result)
 
-
-    all_scores =  None
-    all_normals = None
     feature_num = np_test_result.shape[-1]
 
-    labels = np_test_result[2, :, 0].tolist()
 
+
+    all_scores =  []
+    all_normals = []
+   
 
     # For validation set, sampling may be done in intervals to match training (example sample_win = 5 for training/val and always 1 for test)
     # So need to adjust sample_len for validation set
-    sample_len_val = np.floor(sample_len/slide_stride)
 
     for i in range(feature_num):
-        test_re_list = np_test_result[:2,:,i] # Here take only first two elements in zero-th dimension
-        val_re_list = np_val_result[:2,:,i]  # Because index 0 is predicted_value, index 1 is ground_truth_value, and index 2 is label
+        test_re_list = np_test_result[:2, :, i] # Here take only first two elements in zero-th dimension
+        val_re_list = np_val_result[:2, :, i] # Because index 0 is predicted_value, index 1 is ground_truth_value, and index 2 is label
+
 
         scores = get_err_scores(test_re_list, run_mean_window, sample_len)
-        normal_dist = get_err_scores(val_re_list, run_mean_window, sample_len_val)
+        normal_dist = get_err_scores(val_re_list, run_mean_window, sample_len)
 
-        if all_scores is None:
-            all_scores = scores
-            all_normals = normal_dist
-        else:
-            all_scores = np.vstack((
-                all_scores,
-                scores
-            ))
-            all_normals = np.vstack((
-                all_normals,
-                normal_dist
-            ))
+        all_scores.append(scores)
+        all_normals.append(normal_dist)
+
+    all_scores = np.vstack(all_scores)
+    all_normals = np.vstack(all_normals)
+
 
     return all_scores, all_normals
 
@@ -50,7 +44,7 @@ def get_final_err_scores(test_result, val_result):
     return all_scores
 
 
-
+ 
 def get_err_scores(test_res, run_mean_window, sample_len):
     "Compute normalized and smoothed error scores"
 
@@ -58,15 +52,17 @@ def get_err_scores(test_res, run_mean_window, sample_len):
 
     n_err_mid, n_err_iqr = get_err_median_and_iqr(test_predict, test_gt)
 
-    test_delta = np.abs(np.subtract(
-                        np.array(test_predict).astype(np.float64), 
-                        np.array(test_gt).astype(np.float64)
-                    ))
+    test_predict = np.asarray(test_predict, dtype=np.float32)
+    test_gt = np.asarray(test_gt, dtype=np.float32)
+
+    test_delta = np.abs(test_predict - test_gt)
     epsilon=1e-2
 
-    err_scores = (test_delta - n_err_mid) / ( np.abs(n_err_iqr) +epsilon)
+    err_scores = test_delta                     # This is done instead of err_scores = (test_delta - n_err_mid) / ( np.abs(n_err_iqr) +epsilon)
+    err_scores -= n_err_mid                     # To reduce possible memory usage
+    err_scores /= (np.abs(n_err_iqr) + epsilon)  
 
-
+    
     total_len = len(err_scores)
     if total_len % sample_len != 0:
         raise ValueError(

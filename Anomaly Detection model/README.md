@@ -47,6 +47,8 @@ data
 ```
     condor_submit main.sub
 ```
+* Need to adjust main.sh to activate the right environment and point to the right directory
+
 ---Saving
 * Continuous error scores per channel for validation and test data are saved in_analysis/err_scores
 * Evaluation scores and threshold are saved in results/your_dataset/{datestr + settings}/time_window.csv

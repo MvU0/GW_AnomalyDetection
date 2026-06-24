@@ -1,8 +1,13 @@
 
 def get_feature_map(dataset):
-
+    """feature_file = list(dataset.columns)
+    feature_file = open(f'./data/{dataset}/list.txt', 'r')
+    feature_list = []
+    for ft in feature_file:
+        feature_list.append(ft.strip())"""
     return list(dataset.columns)  # This actually gives the right features -- originally had to put in the name of the dataset so 'GW' now just put in the training data
 
+    return feature_list
 # graph is 'fully-connect'
 def get_fc_graph_struc(dataset):
     feature_file = open(f'./data/{dataset}/list.txt', 'r')

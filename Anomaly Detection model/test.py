@@ -51,3 +51,7 @@ def test(model, dataloader):
     avg_loss = sum(test_loss_list) / len(test_loss_list)
 
     return avg_loss, [t_test_predicted_list, t_test_ground_list, t_test_labels_list], [t_test_predicted_list, t_test_ground_list]
+
+
+
+

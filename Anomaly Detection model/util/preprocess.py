@@ -67,8 +67,8 @@ def build_net(target, all_features):
 def construct_data(data, feature_map, labels=0):
     valid_features = [f for f in feature_map if f in data.columns]
     missing = set(feature_map) - set(valid_features)
-    if missing:
-        print("Missing features:", missing)
+    #if missing:
+    #    print("Missing features:", missing)
 
     x = data[valid_features].to_numpy().T # (features, samples)
     res = []
