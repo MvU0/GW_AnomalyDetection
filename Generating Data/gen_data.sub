@@ -1,0 +1,9 @@
++UseOS = "el9"
++JobCategory = "long"
+executable  = gen_data.sh
+output      = condor/output.out
+error       = condor/error.err
+log         = condor/log.log
+request_memory = 100 Gb
+request_disk = 1 Gb
+queue
